@@ -1,36 +1,88 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  getLatestAssessment,
-  industryBenchmarks,
-  getMaturityLevel,
-} from "@/lib/data/assessments";
-import { dimensionColors, dimensions, type Dimension } from "@/lib/data/questions";
-import { TrendingUp, TrendingDown, Minus } from "lucide-react";
-
-function getPercentile(score: number, benchmark: number): number {
-  // Simplified percentile estimate based on distance from benchmark
-  const diff = score - benchmark;
-  const base = 50;
-  const percentile = Math.min(99, Math.max(1, Math.round(base + diff * 20)));
-  return percentile;
-}
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { getBenchmarkSummary, type BenchmarkSummary } from "@/lib/data/api";
+import { dimensionColors } from "@/lib/data/questions";
+import { TrendingUp, TrendingDown, Minus, AlertTriangle, ArrowRight } from "lucide-react";
 
 export default function BenchmarksPage() {
-  const latest = getLatestAssessment();
+  const [summary, setSummary] = useState<BenchmarkSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const benchmarkData = dimensions.map((dim) => {
-    const ds = latest.dimensionScores.find((d) => d.dimension === dim)!;
-    const benchmark = industryBenchmarks[dim];
-    const diff = Number((ds.average - benchmark).toFixed(1));
-    const percentile = getPercentile(ds.average, benchmark);
-    return { dimension: dim, score: ds.average, benchmark, diff, percentile };
-  });
+  useEffect(() => {
+    (async () => {
+      try {
+        setSummary(await getBenchmarkSummary());
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load benchmarks");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
-  const overallBenchmark =
-    Object.values(industryBenchmarks).reduce((a, b) => a + b, 0) / dimensions.length;
-  const overallDiff = Number((latest.overallScore - overallBenchmark).toFixed(1));
-  const overallPercentile = getPercentile(latest.overallScore, overallBenchmark);
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Industry Benchmarks</h1>
+          <p className="text-muted-foreground">
+            Compare your AI maturity against industry averages
+          </p>
+        </div>
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-96 w-full" />
+      </div>
+    );
+  }
+
+  if (error || !summary) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Industry Benchmarks</h1>
+          <p className="text-muted-foreground">
+            Compare your AI maturity against industry averages
+          </p>
+        </div>
+        {error ? (
+          <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        ) : (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+              <p className="font-medium">No benchmark data yet</p>
+              <p className="text-sm text-muted-foreground">
+                Complete an assessment and visit your scorecard to generate
+                benchmark comparisons.
+              </p>
+              <div className="flex gap-3">
+                <Link href="/assessments/new">
+                  <Button>
+                    Start New Assessment
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </Link>
+                <Link href="/scorecard">
+                  <Button variant="outline">View Scorecard</Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    );
+  }
+
+  const { rows: benchmarkData, overallScore, overallBenchmark, overallDiff, overallPercentile } = summary;
 
   // Max bar width calculation
   const maxScore = 5;
@@ -50,7 +102,7 @@ export default function BenchmarksPage() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
             <div className="flex-1">
               <p className="text-sm font-medium text-muted-foreground">Your Overall Score</p>
-              <p className="text-4xl font-bold">{latest.overallScore.toFixed(1)}</p>
+              <p className="text-4xl font-bold">{overallScore.toFixed(1)}</p>
             </div>
             <div className="flex-1">
               <p className="text-sm font-medium text-muted-foreground">Industry Average</p>

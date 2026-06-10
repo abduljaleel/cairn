@@ -1,38 +1,110 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   dimensions,
   dimensionDescriptions,
-  getQuestionsByDimension,
   scaleLabels,
   type Dimension,
+  type Question,
 } from "@/lib/data/questions";
-import { ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
+import {
+  completeAssessment,
+  createAssessment,
+  getAssessment,
+  getResponses,
+  listQuestions,
+  saveResponse,
+} from "@/lib/data/api";
+import { ArrowLeft, ArrowRight, CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 
 export default function AssessmentQuestionnairePage() {
   const params = useParams();
   const router = useRouter();
+  const idParam = typeof params.id === "string" ? params.id : "";
+
+  const [assessmentId, setAssessmentId] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [responses, setResponses] = useState<Record<string, number>>({});
   const [activeDimension, setActiveDimension] = useState<string>("Strategy");
+  const [loading, setLoading] = useState(true);
+  const [completing, setCompleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  const totalQuestions = 30;
+  const initRef = useRef(false);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    if (initRef.current) return;
+    initRef.current = true;
+    (async () => {
+      try {
+        const loadedQuestions = await listQuestions();
+        setQuestions(loadedQuestions);
+        if (idParam === "new") {
+          const created = await createAssessment();
+          setAssessmentId(created.id);
+          router.replace(`/assessments/${created.id}`);
+        } else {
+          const existing = await getAssessment(idParam);
+          if (!existing) {
+            setError("Assessment not found.");
+            return;
+          }
+          if (existing.status === "completed") {
+            router.replace(`/assessments/${idParam}/results`);
+            return;
+          }
+          setAssessmentId(idParam);
+          setResponses(await getResponses(idParam));
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load the assessment");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [idParam, router]);
+
+  const questionsByDimension = useMemo(() => {
+    const map = new Map<Dimension, Question[]>();
+    dimensions.forEach((dim) => map.set(dim, []));
+    questions.forEach((q) => map.get(q.dimension)?.push(q));
+    return map;
+  }, [questions]);
+
+  const getDimensionQuestions = (dim: Dimension): Question[] =>
+    questionsByDimension.get(dim) ?? [];
+
+  const totalQuestions = questions.length;
   const answeredQuestions = Object.keys(responses).length;
-  const progressPercent = Math.round((answeredQuestions / totalQuestions) * 100);
+  const progressPercent = totalQuestions
+    ? Math.round((answeredQuestions / totalQuestions) * 100)
+    : 0;
 
-  const handleResponse = (questionId: string, value: number) => {
-    setResponses((prev) => ({ ...prev, [questionId]: value }));
+  const handleResponse = (question: Question, value: number) => {
+    setResponses((prev) => ({ ...prev, [question.id]: value }));
+    if (!assessmentId) return;
+    setSaveError(null);
+    saveQueueRef.current = saveQueueRef.current
+      .then(() => saveResponse(assessmentId, question, value))
+      .catch((e) => {
+        setSaveError(
+          e instanceof Error ? e.message : "Failed to save your answer"
+        );
+      });
   };
 
   const currentDimensionIndex = dimensions.indexOf(activeDimension as Dimension);
-  const currentQuestions = getQuestionsByDimension(activeDimension as Dimension);
-  const dimensionAnswered = currentQuestions.filter((q) => responses[q.id] !== undefined).length;
 
   const handleNext = () => {
     if (currentDimensionIndex < dimensions.length - 1) {
@@ -46,11 +118,60 @@ export default function AssessmentQuestionnairePage() {
     }
   };
 
-  const handleComplete = () => {
-    router.push(`/assessments/${params.id}/results`);
+  const handleComplete = async () => {
+    if (!assessmentId) return;
+    setCompleting(true);
+    setError(null);
+    try {
+      await saveQueueRef.current;
+      await completeAssessment(assessmentId, questions, responses);
+      router.push(`/assessments/${assessmentId}/results`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to complete the assessment");
+      setCompleting(false);
+    }
   };
 
-  const isComplete = answeredQuestions === totalQuestions;
+  const isComplete = totalQuestions > 0 && answeredQuestions === totalQuestions;
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">AI Competitiveness Diagnostic</h1>
+          <p className="text-muted-foreground">
+            Rate your organization across 6 dimensions of AI readiness
+          </p>
+        </div>
+        <Skeleton className="h-20 w-full" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-96 w-full" />
+      </div>
+    );
+  }
+
+  if (error && !assessmentId) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">AI Competitiveness Diagnostic</h1>
+          <p className="text-muted-foreground">
+            Rate your organization across 6 dimensions of AI readiness
+          </p>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+        <Link href="/assessments">
+          <Button variant="outline">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Assessments
+          </Button>
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -74,13 +195,20 @@ export default function AssessmentQuestionnairePage() {
         </CardContent>
       </Card>
 
+      {(error || saveError) && (
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>{error || saveError}</span>
+        </div>
+      )}
+
       {/* Dimension Tabs */}
       <Tabs value={activeDimension} onValueChange={(v) => setActiveDimension(v ?? "all")}>
         <TabsList className="w-full grid grid-cols-3 lg:grid-cols-6">
           {dimensions.map((dim) => {
-            const dimQuestions = getQuestionsByDimension(dim);
+            const dimQuestions = getDimensionQuestions(dim);
             const dimAnswered = dimQuestions.filter((q) => responses[q.id] !== undefined).length;
-            const allAnswered = dimAnswered === dimQuestions.length;
+            const allAnswered = dimQuestions.length > 0 && dimAnswered === dimQuestions.length;
             return (
               <TabsTrigger key={dim} value={dim} className="relative">
                 {dim}
@@ -93,7 +221,7 @@ export default function AssessmentQuestionnairePage() {
         </TabsList>
 
         {dimensions.map((dim) => {
-          const dimQuestions = getQuestionsByDimension(dim);
+          const dimQuestions = getDimensionQuestions(dim);
           return (
             <TabsContent key={dim} value={dim}>
               <Card>
@@ -121,16 +249,18 @@ export default function AssessmentQuestionnairePage() {
                             </span>
                             {question.text}
                           </p>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {question.description}
-                          </p>
+                          {question.description && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {question.description}
+                            </p>
+                          )}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {[1, 2, 3, 4, 5].map((value) => (
                             <button
                               key={value}
                               type="button"
-                              onClick={() => handleResponse(question.id, value)}
+                              onClick={() => handleResponse(question, value)}
                               className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-all ${
                                 responses[question.id] === value
                                   ? "border-primary bg-primary text-primary-foreground"
@@ -169,11 +299,15 @@ export default function AssessmentQuestionnairePage() {
                 ) : (
                   <Button
                     onClick={handleComplete}
-                    disabled={!isComplete}
+                    disabled={!isComplete || completing}
                     className={isComplete ? "" : "opacity-50"}
                   >
-                    <CheckCircle2 className="mr-2 h-4 w-4" />
-                    Complete Assessment
+                    {completing ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                    )}
+                    {completing ? "Saving…" : "Complete Assessment"}
                   </Button>
                 )}
               </div>

@@ -1,15 +1,16 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useParams } from "next/navigation";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  getAssessmentById,
-  getLatestAssessment,
-  mockRecommendations,
-  type Recommendation,
-} from "@/lib/data/assessments";
-import { dimensionColors, type Dimension } from "@/lib/data/questions";
-import { ArrowLeft, Clock, Zap, Target } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { type Assessment, type Recommendation } from "@/lib/data/assessments";
+import { getAssessment, getOrCreateRoadmap } from "@/lib/data/api";
+import { dimensionColors } from "@/lib/data/questions";
+import { ArrowLeft, ArrowRight, Clock, Zap, Target, AlertTriangle } from "lucide-react";
 
 const timelineOrder = { "30-day": 0, "60-day": 1, "90-day": 2 };
 const timelineLabels = {
@@ -53,16 +54,106 @@ function EffortBadge({ level }: { level: string }) {
   );
 }
 
-export default async function RoadmapPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  const assessment = getAssessmentById(id) || getLatestAssessment();
+export default function RoadmapPage() {
+  const params = useParams();
+  const id = typeof params.id === "string" ? params.id : "";
+
+  const [assessment, setAssessment] = useState<Assessment | null>(null);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    (async () => {
+      try {
+        const loaded = await getAssessment(id);
+        if (!loaded) {
+          setError("Assessment not found.");
+          return;
+        }
+        setAssessment(loaded);
+        if (loaded.status !== "completed") {
+          setError(
+            "Complete this assessment to generate your transformation roadmap."
+          );
+          return;
+        }
+        const roadmap = await getOrCreateRoadmap(loaded);
+        setRecommendations(roadmap.recommendations);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load the roadmap");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Link href="/assessments">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-72" />
+            <Skeleton className="h-4 w-56" />
+          </div>
+        </div>
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-64 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (error || !assessment) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Link href="/assessments">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">
+              Transformation Roadmap
+            </h1>
+            <p className="text-muted-foreground">
+              Prioritized actions based on your assessment results
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>{error ?? "Assessment not found."}</span>
+        </div>
+        <div className="flex gap-4">
+          {assessment && assessment.status !== "completed" && (
+            <Link href={`/assessments/${assessment.id}`}>
+              <Button>
+                Continue Assessment
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </Link>
+          )}
+          <Link href="/assessments">
+            <Button variant="outline">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Assessments
+            </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   // Group recommendations by timeline
-  const grouped = mockRecommendations.reduce(
+  const grouped = recommendations.reduce(
     (acc, rec) => {
       if (!acc[rec.timeline]) acc[rec.timeline] = [];
       acc[rec.timeline].push(rec);
@@ -101,21 +192,21 @@ export default async function RoadmapPage({
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
             <div>
               <p className="text-sm font-medium text-muted-foreground">Total Actions</p>
-              <p className="text-3xl font-bold">{mockRecommendations.length}</p>
+              <p className="text-3xl font-bold">{recommendations.length}</p>
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">High Impact</p>
               <p className="text-3xl font-bold">
-                {mockRecommendations.filter((r) => r.impact === "High").length}
+                {recommendations.filter((r) => r.impact === "High").length}
               </p>
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Quick Wins</p>
               <p className="text-3xl font-bold">
-                {mockRecommendations.filter(
+                {recommendations.filter(
                   (r) => r.impact === "High" && r.effort === "Low"
                 ).length +
-                  mockRecommendations.filter(
+                  recommendations.filter(
                     (r) => r.impact === "Medium" && r.effort === "Low"
                   ).length}
               </p>
@@ -123,7 +214,7 @@ export default async function RoadmapPage({
             <div>
               <p className="text-sm font-medium text-muted-foreground">Dimensions Covered</p>
               <p className="text-3xl font-bold">
-                {new Set(mockRecommendations.map((r) => r.dimension)).size}
+                {new Set(recommendations.map((r) => r.dimension)).size}
               </p>
             </div>
           </div>

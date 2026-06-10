@@ -1,14 +1,19 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-  getAssessmentById,
-  getLatestAssessment,
   getMaturityLevel,
   getMaturityColor,
+  type Assessment,
 } from "@/lib/data/assessments";
-import { dimensionColors, dimensionDescriptions, type Dimension } from "@/lib/data/questions";
+import { getAssessmentWithScores } from "@/lib/data/api";
+import { dimensionColors } from "@/lib/data/questions";
 import { ArrowRight, TrendingUp, AlertTriangle, ArrowLeft } from "lucide-react";
 
 function RadarChart({
@@ -39,7 +44,6 @@ function RadarChart({
 
   // Data points
   const dataPoints = scores.map((s, i) => getPoint(i, s.average));
-  const dataPath = dataPoints.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ") + " Z";
 
   // Axis labels
   const labelOffset = 20;
@@ -140,13 +144,97 @@ function RadarChart({
   );
 }
 
-export default async function AssessmentResultsPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  const assessment = getAssessmentById(id) || getLatestAssessment();
+export default function AssessmentResultsPage() {
+  const params = useParams();
+  const id = typeof params.id === "string" ? params.id : "";
+
+  const [assessment, setAssessment] = useState<Assessment | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    (async () => {
+      try {
+        const loaded = await getAssessmentWithScores(id);
+        if (!loaded) {
+          setError("Assessment not found.");
+        } else {
+          setAssessment(loaded);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load results");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Link href="/assessments">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-4 w-40" />
+          </div>
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Skeleton className="h-96 w-full" />
+          <div className="space-y-4">
+            <Skeleton className="h-44 w-full" />
+            <Skeleton className="h-44 w-full" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !assessment || assessment.dimensionScores.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Link href="/assessments">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Assessment Results</h1>
+            <p className="text-muted-foreground">AI competitiveness diagnostic</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>
+            {error ??
+              "This assessment has no responses yet — complete the questionnaire to see results."}
+          </span>
+        </div>
+        <div className="flex gap-4">
+          {!error && assessment && (
+            <Link href={`/assessments/${assessment.id}`}>
+              <Button>
+                Continue Assessment
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </Link>
+          )}
+          <Link href="/assessments">
+            <Button variant="outline">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Assessments
+            </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   const sortedDimensions = [...assessment.dimensionScores].sort(
     (a, b) => b.average - a.average
