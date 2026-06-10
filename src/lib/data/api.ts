@@ -114,7 +114,10 @@ function mapQuestion(row: QuestionRow): Question {
 function deriveAssessmentName(dateIso: string): string {
   const d = new Date(dateIso);
   const quarter = Math.floor(d.getMonth() / 3) + 1;
-  return `Q${quarter} ${d.getFullYear()} Assessment`;
+  // Include the day so multiple assessments in the same quarter stay
+  // distinguishable in lists and headers (e.g. "Q2 2026 Assessment — 4 Jun").
+  const day = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return `Q${quarter} ${d.getFullYear()} Assessment — ${day}`;
 }
 
 function periodLabel(dateIso: string): string {
@@ -175,14 +178,33 @@ function mapScorecard(row: ScorecardRow): ScorecardEntry {
 async function seedQuestionCatalog(supabase: SupabaseClient): Promise<void> {
   const rows = questionCatalog.map((q, index) => ({
     dimension: q.dimension,
+    // "likert" is the canonical DB value (the catalog is 1-5 Likert items
+    // and the migration CHECK only allows likert/multiple_choice/open_text/numeric).
+    question_type: "likert",
     question_text: q.text,
-    question_type: "scale",
     weight: 1,
     order_index: index,
     is_active: true,
   }));
   const { error } = await supabase.from("questions").insert(rows);
-  if (error) throw new Error(error.message);
+  // 23505 = unique violation: another session seeded the catalog concurrently
+  // (idempotent once a unique index on question_text exists). Treat as success.
+  if (error && error.code !== "23505") throw new Error(error.message);
+}
+
+/**
+ * The global catalog has no DB-level uniqueness guard yet, so a concurrent
+ * first-load race can write duplicate rows. Deduplicate by question_text on
+ * read (keeping the first occurrence in order_index order) so duplicates can
+ * never double the questionnaire or computeScores' maxScore.
+ */
+function dedupeQuestionRows(rows: QuestionRow[]): QuestionRow[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    if (seen.has(row.question_text)) return false;
+    seen.add(row.question_text);
+    return true;
+  });
 }
 
 async function fetchQuestionRows(supabase: SupabaseClient): Promise<QuestionRow[]> {
@@ -192,7 +214,7 @@ async function fetchQuestionRows(supabase: SupabaseClient): Promise<QuestionRow[
     .eq("is_active", true)
     .order("order_index", { ascending: true });
   if (error) throw new Error(error.message);
-  if (data && data.length > 0) return data as QuestionRow[];
+  if (data && data.length > 0) return dedupeQuestionRows(data as QuestionRow[]);
   await seedQuestionCatalog(supabase);
   const retry = await supabase
     .from("questions")
@@ -200,7 +222,7 @@ async function fetchQuestionRows(supabase: SupabaseClient): Promise<QuestionRow[
     .eq("is_active", true)
     .order("order_index", { ascending: true });
   if (retry.error) throw new Error(retry.error.message);
-  return (retry.data ?? []) as QuestionRow[];
+  return dedupeQuestionRows((retry.data ?? []) as QuestionRow[]);
 }
 
 export async function listQuestions(): Promise<Question[]> {
@@ -245,7 +267,9 @@ export async function createAssessment(): Promise<Assessment> {
     .insert({
       org_id: orgId,
       user_id: userId,
-      status: "in-progress",
+      // Canonical DB value (matches the migration CHECK constraint);
+      // mapAssessment normalizes it to the UI's "in-progress" on read.
+      status: "in_progress",
       started_at: new Date().toISOString(),
     })
     .select("*")
@@ -496,7 +520,9 @@ export async function ensureScorecards(
         ds.average,
         industryBenchmarks[ds.dimension]
       ),
-      trend_direction: delta > 0.05 ? "up" : delta < -0.05 ? "down" : "stable",
+      // "flat" is the canonical DB value (matches the migration CHECK);
+      // mapScorecard normalizes anything not "up"/"down" to "stable" for the UI.
+      trend_direction: delta > 0.05 ? "up" : delta < -0.05 ? "down" : "flat",
       period: periodLabel(latest.date),
     };
   });

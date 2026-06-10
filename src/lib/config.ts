@@ -1,7 +1,7 @@
 export const appConfig = {
   name: "Cairn",
-  description: "Causal provenance graph for every agent decision. From London.",
-  url: "https://cairn.co.uk",
+  description: "Audit trail showing why the AI made every change.",
+  url: "https://cairn-akventurecorp.vercel.app",
   navItems: [
     { title: "Dashboard", href: "/dashboard", icon: "dashboard" },
     { title: "Assessments", href: "/assessments", icon: "check" },

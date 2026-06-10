@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -146,6 +146,7 @@ function RadarChart({
 
 export default function AssessmentResultsPage() {
   const params = useParams();
+  const router = useRouter();
   const id = typeof params.id === "string" ? params.id : "";
 
   const [assessment, setAssessment] = useState<Assessment | null>(null);
@@ -159,16 +160,22 @@ export default function AssessmentResultsPage() {
         const loaded = await getAssessmentWithScores(id);
         if (!loaded) {
           setError("Assessment not found.");
+        } else if (loaded.status !== "completed") {
+          // Unfinished assessments must not render official-looking partial
+          // scores — send the user back to the questionnaire (mirror of the
+          // completed → results redirect in [id]/page.tsx). Keep the loading
+          // skeleton up while the redirect happens.
+          router.replace(`/assessments/${id}`);
+          return;
         } else {
           setAssessment(loaded);
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load results");
-      } finally {
-        setLoading(false);
       }
+      setLoading(false);
     })();
-  }, [id]);
+  }, [id, router]);
 
   if (loading) {
     return (

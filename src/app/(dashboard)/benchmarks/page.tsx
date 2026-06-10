@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getBenchmarkSummary, type BenchmarkSummary } from "@/lib/data/api";
-import { dimensionColors } from "@/lib/data/questions";
+import { dimensionColors, dimensions } from "@/lib/data/questions";
 import { TrendingUp, TrendingDown, Minus, AlertTriangle, ArrowRight } from "lucide-react";
 
 export default function BenchmarksPage() {
@@ -224,8 +224,17 @@ export default function BenchmarksPage() {
           {/* Legend */}
           <div className="mt-8 flex items-center gap-6 border-t pt-4 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
-              <div className="h-3 w-8 rounded bg-primary" />
-              <span>Your Organization</span>
+              {/* The "You" bars are colored per dimension, so the swatch
+                  reflects that instead of a single primary color. */}
+              <div
+                className="h-3 w-8 rounded"
+                style={{
+                  background: `linear-gradient(90deg, ${dimensions
+                    .map((dim) => dimensionColors[dim])
+                    .join(", ")})`,
+                }}
+              />
+              <span>Your Organization (colored by dimension)</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="h-3 w-8 rounded bg-muted-foreground/30" />

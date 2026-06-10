@@ -42,6 +42,11 @@ export default function AssessmentQuestionnairePage() {
 
   const initRef = useRef(false);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // Answers whose saveResponse call failed (latest value per question) so
+  // completion can retry them instead of silently completing with missing rows.
+  const failedSavesRef = useRef(
+    new Map<string, { question: Question; value: number }>()
+  );
 
   useEffect(() => {
     if (initRef.current) return;
@@ -97,7 +102,11 @@ export default function AssessmentQuestionnairePage() {
     setSaveError(null);
     saveQueueRef.current = saveQueueRef.current
       .then(() => saveResponse(assessmentId, question, value))
+      .then(() => {
+        failedSavesRef.current.delete(question.id);
+      })
       .catch((e) => {
+        failedSavesRef.current.set(question.id, { question, value });
         setSaveError(
           e instanceof Error ? e.message : "Failed to save your answer"
         );
@@ -124,6 +133,16 @@ export default function AssessmentQuestionnairePage() {
     setError(null);
     try {
       await saveQueueRef.current;
+      // Re-attempt any answers that previously failed to persist. If a retry
+      // fails again we throw, blocking completion, so the assessments row can
+      // never count answers that were never written to assessment_responses.
+      for (const [questionId, failed] of Array.from(
+        failedSavesRef.current.entries()
+      )) {
+        await saveResponse(assessmentId, failed.question, failed.value);
+        failedSavesRef.current.delete(questionId);
+      }
+      setSaveError(null);
       await completeAssessment(assessmentId, questions, responses);
       router.push(`/assessments/${assessmentId}/results`);
     } catch (e) {
@@ -203,7 +222,13 @@ export default function AssessmentQuestionnairePage() {
       )}
 
       {/* Dimension Tabs */}
-      <Tabs value={activeDimension} onValueChange={(v) => setActiveDimension(v ?? "all")}>
+      <Tabs
+        value={activeDimension}
+        onValueChange={(v) => {
+          // Ignore null/undefined — every value we render is a valid dimension.
+          if (typeof v === "string") setActiveDimension(v);
+        }}
+      >
         <TabsList className="w-full grid grid-cols-3 lg:grid-cols-6">
           {dimensions.map((dim) => {
             const dimQuestions = getDimensionQuestions(dim);
